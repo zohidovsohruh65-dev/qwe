@@ -8,24 +8,26 @@ app.use(express.static(__dirname));
 let players = {};
 
 io.on('connection', (socket) => {
-    // Начальные координаты — всегда числа!
     players[socket.id] = {
         x: 300, y: 300,
         angle: 0, turretAngle: 0,
         hp: 100,
         color: 'hsl(' + Math.random() * 360 + ', 80%, 50%)'
     };
-    
-    io.emit('updatePlayers', players);
+
+    // Новому игроку — весь список
+    socket.emit('updatePlayers', players);
+    // Остальным — только новый игрок
+    socket.broadcast.emit('updatePlayers', { [socket.id]: players[socket.id] });
 
     socket.on('move', (data) => {
         if (players[socket.id]) {
-            // Проверка на валидность данных, чтобы танк не исчезал
             players[socket.id].x = Number(data.x) || 300;
             players[socket.id].y = Number(data.y) || 300;
             players[socket.id].angle = Number(data.angle) || 0;
             players[socket.id].turretAngle = Number(data.turretAngle) || 0;
-            socket.broadcast.emit('updatePlayers', players);
+            // Только изменённый игрок
+            socket.broadcast.emit('updatePlayers', { [socket.id]: players[socket.id] });
         }
     });
 
@@ -46,7 +48,8 @@ io.on('connection', (socket) => {
                 players[id].x = Math.random() * 500 + 50;
                 players[id].y = Math.random() * 500 + 50;
             }
-            io.emit('updatePlayers', players);
+            // Только изменённый игрок
+            io.emit('updatePlayers', { [id]: players[id] });
         }
     });
 
