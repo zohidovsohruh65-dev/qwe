@@ -31,12 +31,13 @@
         let mouseX = 0, mouseY = 0;
 
         socket.on('connect', () => { myId = socket.id; });
-        
+
         socket.on('updatePlayers', (data) => {
             for (let id in data) {
                 if (id !== myId) {
-                    if (!players[id]) players[id] = data[id];
-                    else {
+                    if (!players[id]) {
+                        players[id] = data[id];
+                    } else {
                         players[id].targetX = data[id].x;
                         players[id].targetY = data[id].y;
                         players[id].angle = data[id].angle;
@@ -48,13 +49,16 @@
                     players[myId].hp = data[id].hp;
                 }
             }
-            for (let id in players) if (!data[id]) delete players[id];
+            // Удаляем отключившихся
+            for (let id in players) {
+                if (!data[id] && id !== myId) delete players[id];
+            }
         });
 
         socket.on('bullet', b => bullets.push({...b, d: 0}));
 
         window.onmousemove = e => { mouseX = e.clientX; mouseY = e.clientY; };
-        
+
         window.onmousedown = () => {
             if (!players[myId]) return;
             const p = players[myId];
@@ -77,8 +81,11 @@
                 ctx.fillStyle = "#ff0";
                 ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
                 if (b.owner === myId) {
-                    for (let id in players) if (id !== myId && Math.hypot(b.x-players[id].x, b.y-players[id].y) < 25) {
-                        socket.emit('hit', id); bullets.splice(i, 1);
+                    for (let id in players) {
+                        if (id !== myId && Math.hypot(b.x - players[id].x, b.y - players[id].y) < 25) {
+                            socket.emit('hit', id);
+                            bullets.splice(i, 1);
+                        }
                     }
                 }
                 if (b.d > 80) bullets.splice(i, 1);
@@ -94,9 +101,9 @@
 
                 ctx.save();
                 ctx.translate(p.x, p.y);
-                // HP
+                // HP бар
                 ctx.fillStyle = "red"; ctx.fillRect(-20, -40, 40, 4);
-                ctx.fillStyle = "#0f0"; ctx.fillRect(-20, -40, (p.hp/100)*40, 4);
+                ctx.fillStyle = "#0f0"; ctx.fillRect(-20, -40, (p.hp / 100) * 40, 4);
                 // Корпус
                 ctx.rotate(p.angle);
                 ctx.fillStyle = p.color; ctx.fillRect(-15, -15, 30, 30);
@@ -108,37 +115,45 @@
                 ctx.fillStyle = "#000"; ctx.fillRect(0, -2, 25, 4);
                 ctx.restore();
             }
+
             document.getElementById('hp').innerText = me.hp;
             requestAnimationFrame(loop);
         }
         loop();
 
+        // Клавиатура
         const keys = {};
         window.onkeydown = e => keys[e.key.toLowerCase()] = true;
         window.onkeyup = e => keys[e.key.toLowerCase()] = false;
-        
+
         setInterval(() => {
             if (!players[myId]) return;
             let moved = false;
             let p = players[myId];
             let speed = 5;
 
-            if (keys['w'] || keys['ц'] || keys['arrowup']) { p.y -= speed; p.angle = -Math.PI/2; moved = true; }
-            if (keys['s'] || keys['ы'] || keys['arrowdown']) { p.y += speed; p.angle = Math.PI/2; moved = true; }
-            if (keys['a'] || keys['ф'] || keys['arrowleft']) { p.x -= speed; p.angle = Math.PI; moved = true; }
-            if (keys['d'] || keys['в'] || keys['arrowright']) { p.x += speed; p.angle = 0; moved = true; }
-            
+            if (keys['w'] || keys['ц'] || keys['arrowup'])    { p.y -= speed; p.angle = -Math.PI/2; moved = true; }
+            if (keys['s'] || keys['ы'] || keys['arrowdown'])   { p.y += speed; p.angle =  Math.PI/2; moved = true; }
+            if (keys['a'] || keys['ф'] || keys['arrowleft'])   { p.x -= speed; p.angle =  Math.PI;   moved = true; }
+            if (keys['d'] || keys['в'] || keys['arrowright'])  { p.x += speed; p.angle =  0;         moved = true; }
+
             if (moved) {
                 socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
             }
         }, 30);
 
+        // Мобильный джойстик
         if ('ontouchstart' in window) {
-            nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '70px', bottom: '70px'}, color: 'white' })
-            .on('move', (e, d) => {
+            nipplejs.create({
+                zone: document.getElementById('joy'),
+                mode: 'static',
+                position: { left: '70px', bottom: '70px' },
+                color: 'white'
+            }).on('move', (e, d) => {
+                if (!players[myId]) return;
                 let p = players[myId];
-                p.x += Math.cos(d.angle.radian)*5;
-                p.y -= Math.sin(d.angle.radian)*5;
+                p.x += Math.cos(d.angle.radian) * 5;
+                p.y -= Math.sin(d.angle.radian) * 5;
                 p.angle = -d.angle.radian;
                 socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
             });
