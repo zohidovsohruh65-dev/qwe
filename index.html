@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Tanks Pro</title>
+    <title>Танки: Фикс</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     <style>
         body { margin: 0; background: #1a1a1a; overflow: hidden; }
-        canvas { display: block; }
-        #ui { position: fixed; top: 10px; left: 10px; color: #fff; font: 20px Arial; pointer-events: none; }
-        #joy { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; }
+        canvas { display: block; background: #222; }
+        #ui { position: fixed; top: 10px; left: 10px; color: #fff; font: 20px Arial; pointer-events: none; z-index: 10; }
+        #joy { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; z-index: 10; }
     </style>
 </head>
 <body>
@@ -31,21 +31,22 @@
         let mouseX = 0, mouseY = 0;
 
         socket.on('connect', () => { myId = socket.id; });
+        
         socket.on('updatePlayers', (data) => {
             for (let id in data) {
                 if (id !== myId) {
                     if (!players[id]) players[id] = data[id];
                     else {
-                        // Плавное перемещение (интерполяция)
                         players[id].targetX = data[id].x;
                         players[id].targetY = data[id].y;
                         players[id].angle = data[id].angle;
                         players[id].turretAngle = data[id].turretAngle;
                         players[id].hp = data[id].hp;
                     }
-                } else if (players[myId]) {
+                } else {
+                    if (!players[myId]) players[myId] = data[id];
                     players[myId].hp = data[id].hp;
-                } else players[myId] = data[id];
+                }
             }
             for (let id in players) if (!data[id]) delete players[id];
         });
@@ -53,18 +54,11 @@
         socket.on('bullet', b => bullets.push({...b, d: 0}));
 
         window.onmousemove = e => { mouseX = e.clientX; mouseY = e.clientY; };
+        
         window.onmousedown = () => {
             if (!players[myId]) return;
             const p = players[myId];
             const ang = Math.atan2(mouseY - p.y, mouseX - p.x);
-            socket.emit('shoot', { x: p.x + Math.cos(ang)*30, y: p.y + Math.sin(ang)*30, angle: ang });
-        };
-
-        // Для телефона — стрельба тапом
-        window.ontouchstart = (e) => {
-            if (e.target.tagName !== 'CANVAS') return;
-            const p = players[myId];
-            const ang = Math.atan2(e.touches[0].clientY - p.y, e.touches[0].clientX - p.x);
             socket.emit('shoot', { x: p.x + Math.cos(ang)*30, y: p.y + Math.sin(ang)*30, angle: ang });
         };
 
@@ -93,7 +87,6 @@
             // Танки
             for (let id in players) {
                 let p = players[id];
-                // Плавно двигаем чужие танки к их реальным координатам
                 if (id !== myId && p.targetX !== undefined) {
                     p.x += (p.targetX - p.x) * 0.2;
                     p.y += (p.targetY - p.y) * 0.2;
@@ -108,44 +101,46 @@
                 ctx.rotate(p.angle);
                 ctx.fillStyle = p.color; ctx.fillRect(-15, -15, 30, 30);
                 ctx.restore();
-                // Башня (отдельно вращается!)
+                // Башня
                 ctx.save();
                 ctx.translate(p.x, p.y);
                 ctx.rotate(p.turretAngle);
-                ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(-5, -5, 10, 10); // Центр
-                ctx.fillStyle = "#000"; ctx.fillRect(0, -2, 25, 4); // Дуло
+                ctx.fillStyle = "#000"; ctx.fillRect(0, -2, 25, 4);
                 ctx.restore();
             }
+            document.getElementById('hp').innerText = me.hp;
             requestAnimationFrame(loop);
         }
         loop();
 
-        // Движение
         const keys = {};
         window.onkeydown = e => keys[e.key.toLowerCase()] = true;
         window.onkeyup = e => keys[e.key.toLowerCase()] = false;
         
         setInterval(() => {
             if (!players[myId]) return;
-            let dx = 0, dy = 0, ang = players[myId].angle;
-            if (keys['w'] || keys['ц']) { dx = Math.cos(ang)*4; dy = Math.sin(ang)*4; }
-            if (keys['s'] || keys['ы']) { dx = -Math.cos(ang)*4; dy = -Math.sin(ang)*4; }
-            if (keys['a'] || keys['ф']) ang -= 0.05;
-            if (keys['d'] || keys['в']) ang += 0.05;
+            let moved = false;
+            let p = players[myId];
+            let speed = 5;
+
+            if (keys['w'] || keys['ц'] || keys['arrowup']) { p.y -= speed; p.angle = -Math.PI/2; moved = true; }
+            if (keys['s'] || keys['ы'] || keys['arrowdown']) { p.y += speed; p.angle = Math.PI/2; moved = true; }
+            if (keys['a'] || keys['ф'] || keys['arrowleft']) { p.x -= speed; p.angle = Math.PI; moved = true; }
+            if (keys['d'] || keys['в'] || keys['arrowright']) { p.x += speed; p.angle = 0; moved = true; }
             
-            if (dx !== 0 || dy !== 0 || ang !== players[myId].angle) {
-                players[myId].x += dx; players[myId].y += dy; players[myId].angle = ang;
-                socket.emit('move', { x: players[myId].x, y: players[myId].y, angle: ang, turretAngle: players[myId].turretAngle });
+            if (moved) {
+                socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
             }
-        }, 20);
+        }, 30);
 
         if ('ontouchstart' in window) {
             nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '70px', bottom: '70px'}, color: 'white' })
             .on('move', (e, d) => {
-                players[myId].x += Math.cos(d.angle.radian)*4;
-                players[myId].y -= Math.sin(d.angle.radian)*4;
-                players[myId].angle = -d.angle.radian;
-                socket.emit('move', { x: players[myId].x, y: players[myId].y, angle: players[myId].angle, turretAngle: players[myId].turretAngle });
+                let p = players[myId];
+                p.x += Math.cos(d.angle.radian)*5;
+                p.y -= Math.sin(d.angle.radian)*5;
+                p.angle = -d.angle.radian;
+                socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
             });
         }
     </script>
