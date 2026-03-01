@@ -2,90 +2,133 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Танковый Бой</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Танки: Кровавая Дуэль</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: sans-serif; }
-        canvas { display: block; background: #444; margin: auto; border: 5px solid #333; }
-        #joy { position: absolute; bottom: 50px; left: 50px; width: 150px; height: 150px; }
-        #info { position: absolute; top: 10px; left: 10px; color: white; }
+        body { margin: 0; background: #222; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; background: #333; margin: auto; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; }
+        #fire-btn { 
+            position: absolute; bottom: 50px; right: 50px; 
+            width: 80px; height: 80px; background: red; border-radius: 50%; 
+            color: white; font-weight: bold; border: 4px solid white;
+            display: none; justify-content: center; align-items: center;
+        }
+        #damage-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 0, 0, 0.4); opacity: 0; pointer-events: none;
+            transition: opacity 0.1s;
+        }
+        #joy { position: absolute; bottom: 50px; left: 50px; width: 120px; height: 120px; }
     </style>
 </head>
 <body>
-    <div id="info">а георгий педарас</div>
+    <div id="damage-overlay"></div>
+    <div id="ui">HP: <span id="my-hp">100</span></div>
     <canvas id="game"></canvas>
     <div id="joy"></div>
+    <div id="fire-btn">ОГОНЬ</div>
 
     <script>
         const socket = io();
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('damage-overlay');
         
-        canvas.width = window.innerWidth < 800 ? window.innerWidth : 800;
-        canvas.height = window.innerHeight < 600 ? window.innerHeight : 600;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
         let players = {};
+        let bullets = [];
         let myId = null;
-        let myPos = { x: 100, y: 100, angle: 0, color: 'lime' };
 
         socket.on('connect', () => { myId = socket.id; });
         socket.on('updatePlayers', (data) => { 
-            players = data; 
-            if (myId && players[myId]) myPos = players[myId];
-        });
-
-        // Отрисовка танка
-        function drawTank(p) {
-            ctx.save();
-            ctx.translate(p.x, p.y);
-            ctx.rotate(p.angle);
-            
-            // Корпус
-            ctx.fillStyle = p.color;
-            ctx.fillRect(-15, -15, 30, 30);
-            ctx.strokeRect(-15, -15, 30, 30);
-            
-            // Дуло
-            ctx.fillStyle = "black";
-            ctx.fillRect(0, -3, 25, 6);
-            ctx.restore();
-        }
-
-        // Движение
-        function move(dx, dy, angle) {
-            myPos.x += dx;
-            myPos.y += dy;
-            myPos.angle = angle;
-            socket.emit('move', myPos);
-        }
-
-        // Цикл игры
-        function update() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            for (let id in players) {
-                drawTank(players[id]);
+            // Если нас подбили — мигаем красным
+            if (myId && players[myId] && data[myId].hp < players[myId].hp) {
+                overlay.style.opacity = 1;
+                setTimeout(() => overlay.style.opacity = 0, 100);
             }
-            requestAnimationFrame(update);
+            players = data; 
+            if (myId && players[myId]) document.getElementById('my-hp').innerText = players[myId].hp;
+        });
+
+        socket.on('bullet', (b) => { bullets.push({...b, life: 100}); });
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Пули
+            bullets.forEach((b, index) => {
+                b.x += Math.cos(b.angle) * 7;
+                b.y += Math.sin(b.angle) * 7;
+                b.life--;
+
+                ctx.fillStyle = "yellow";
+                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
+
+                // Проверка попадания (только для своего выстрела, чтобы не дублировать)
+                if (b.owner === myId) {
+                    for (let id in players) {
+                        if (id !== myId) {
+                            let p = players[id];
+                            let dist = Math.hypot(b.x - p.x, b.y - p.y);
+                            if (dist < 20) {
+                                socket.emit('hit', id);
+                                bullets.splice(index, 1);
+                            }
+                        }
+                    }
+                }
+                if (b.life <= 0) bullets.splice(index, 1);
+            });
+
+            // Танки
+            for (let id in players) {
+                let p = players[id];
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                
+                // Полоска ХП над танком
+                ctx.fillStyle = "red"; ctx.fillRect(-20, -30, 40, 5);
+                ctx.fillStyle = "lime"; ctx.fillRect(-20, -30, (p.hp/100)*40, 5);
+
+                ctx.rotate(p.angle);
+                ctx.fillStyle = p.color;
+                ctx.fillRect(-15, -15, 30, 30);
+                ctx.fillStyle = "black"; ctx.fillRect(0, -3, 25, 6);
+                ctx.restore();
+            }
+            requestAnimationFrame(draw);
         }
-        update();
+        draw();
 
-        // ПК управление
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowUp' || e.key === 'w') move(0, -4, -Math.PI/2);
-            if (e.key === 'ArrowDown' || e.key === 's') move(0, 4, Math.PI/2);
-            if (e.key === 'ArrowLeft' || e.key === 'a') move(-4, 0, Math.PI);
-            if (e.key === 'ArrowRight' || e.key === 'd') move(4, 0, 0);
+        function move(dx, dy, ang) {
+            if (!myId || !players[myId]) return;
+            players[myId].x += dx;
+            players[myId].y += dy;
+            players[myId].angle = ang;
+            socket.emit('move', players[myId]);
+        }
+
+        // Управление ПК
+        window.addEventListener('keydown', e => {
+            if (e.key === 'w') move(0, -5, -Math.PI/2);
+            if (e.key === 's') move(0, 5, Math.PI/2);
+            if (e.key === 'a') move(-5, 0, Math.PI);
+            if (e.key === 'd') move(5, 0, 0);
+            if (e.code === 'Space') socket.emit('shoot');
         });
 
-        // Джойстик для телефона
-        const manager = nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '75px', top: '75px'}, color: 'white' });
-        manager.on('move', (evt, data) => {
-            const dx = Math.cos(data.angle.radian) * 4;
-            const dy = -Math.sin(data.angle.radian) * 4;
-            move(dx, dy, -data.angle.radian);
-        });
+        // Мобайл
+        if ('ontouchstart' in window) {
+            document.getElementById('fire-btn').style.display = 'flex';
+            document.getElementById('fire-btn').ontouchstart = () => socket.emit('shoot');
+            nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '60px', bottom: '60px'}, color: 'white' })
+            .on('move', (e, d) => move(Math.cos(d.angle.radian)*5, -Math.sin(d.angle.radian)*5, -d.angle.radian));
+        }
     </script>
 </body>
 </html>
