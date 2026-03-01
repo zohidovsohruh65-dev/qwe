@@ -3,39 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Танки: Кровавая Дуэль</title>
+    <title>Танки Онлайн</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     <style>
-        body { margin: 0; background: #222; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; background: #333; margin: auto; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; }
+        body { margin: 0; background: #222; overflow: hidden; font-family: sans-serif; }
+        canvas { display: block; background: #333; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; font-size: 20px; }
         #fire-btn { 
-            position: absolute; bottom: 50px; right: 50px; 
-            width: 80px; height: 80px; background: red; border-radius: 50%; 
-            color: white; font-weight: bold; border: 4px solid white;
-            display: none; justify-content: center; align-items: center;
+            position: absolute; bottom: 40px; right: 40px; 
+            width: 80px; height: 80px; background: rgba(255,0,0,0.7); 
+            border-radius: 50%; color: white; display: none; 
+            justify-content: center; align-items: center; border: 3px solid white;
         }
-        #damage-overlay {
+        #damage-flash {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255, 0, 0, 0.4); opacity: 0; pointer-events: none;
-            transition: opacity 0.1s;
+            background: rgba(255, 0, 0, 0.5); opacity: 0; pointer-events: none;
         }
-        #joy { position: absolute; bottom: 50px; left: 50px; width: 120px; height: 120px; }
+        #joy { position: absolute; bottom: 40px; left: 40px; width: 120px; height: 120px; }
     </style>
 </head>
 <body>
-    <div id="damage-overlay"></div>
-    <div id="ui">HP: <span id="my-hp">100</span></div>
+    <div id="damage-flash"></div>
+    <div id="ui">HP: <span id="hp-val">100</span></div>
     <canvas id="game"></canvas>
     <div id="joy"></div>
-    <div id="fire-btn">ОГОНЬ</div>
+    <div id="fire-btn">БАБАХ</div>
 
     <script>
         const socket = io();
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d');
-        const overlay = document.getElementById('damage-overlay');
+        const flash = document.getElementById('damage-flash');
         
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
@@ -45,73 +44,72 @@
         let myId = null;
 
         socket.on('connect', () => { myId = socket.id; });
-        socket.on('updatePlayers', (data) => { 
-            // Если нас подбили — мигаем красным
+
+        socket.on('updatePlayers', (data) => {
+            // Эффект красного экрана при получении урона
             if (myId && players[myId] && data[myId].hp < players[myId].hp) {
-                overlay.style.opacity = 1;
-                setTimeout(() => overlay.style.opacity = 0, 100);
+                flash.style.opacity = 1;
+                setTimeout(() => flash.style.opacity = 0, 150);
             }
-            players = data; 
-            if (myId && players[myId]) document.getElementById('my-hp').innerText = players[myId].hp;
+            players = data;
+            if (myId && players[myId]) document.getElementById('hp-val').innerText = players[myId].hp;
         });
 
-        socket.on('bullet', (b) => { bullets.push({...b, life: 100}); });
+        socket.on('bullet', (b) => { bullets.push({...b, dist: 0}); });
+
+        function move(dx, dy, angle) {
+            if (!myId || !players[myId]) return;
+            players[myId].x += dx;
+            players[myId].y += dy;
+            players[myId].angle = angle;
+            socket.emit('move', players[myId]); // Шлем координаты
+        }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Пули
-            bullets.forEach((b, index) => {
-                b.x += Math.cos(b.angle) * 7;
-                b.y += Math.sin(b.angle) * 7;
-                b.life--;
+            // Рисуем пули
+            bullets.forEach((b, i) => {
+                b.x += Math.cos(b.angle) * 8;
+                b.y += Math.sin(b.angle) * 8;
+                b.dist++;
+                ctx.fillStyle = "orange";
+                ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI*2); ctx.fill();
 
-                ctx.fillStyle = "yellow";
-                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
-
-                // Проверка попадания (только для своего выстрела, чтобы не дублировать)
+                // Проверка попадания
                 if (b.owner === myId) {
                     for (let id in players) {
                         if (id !== myId) {
                             let p = players[id];
-                            let dist = Math.hypot(b.x - p.x, b.y - p.y);
-                            if (dist < 20) {
+                            if (Math.hypot(b.x - p.x, b.y - p.y) < 20) {
                                 socket.emit('hit', id);
-                                bullets.splice(index, 1);
+                                bullets.splice(i, 1);
                             }
                         }
                     }
                 }
-                if (b.life <= 0) bullets.splice(index, 1);
+                if (b.dist > 100) bullets.splice(i, 1);
             });
 
-            // Танки
+            // Рисуем танки
             for (let id in players) {
                 let p = players[id];
                 ctx.save();
                 ctx.translate(p.x, p.y);
                 
-                // Полоска ХП над танком
-                ctx.fillStyle = "red"; ctx.fillRect(-20, -30, 40, 5);
-                ctx.fillStyle = "lime"; ctx.fillRect(-20, -30, (p.hp/100)*40, 5);
+                // Полоска здоровья
+                ctx.fillStyle = "red"; ctx.fillRect(-20, -35, 40, 5);
+                ctx.fillStyle = "#0f0"; ctx.fillRect(-20, -35, (p.hp/100)*40, 5);
 
                 ctx.rotate(p.angle);
                 ctx.fillStyle = p.color;
-                ctx.fillRect(-15, -15, 30, 30);
-                ctx.fillStyle = "black"; ctx.fillRect(0, -3, 25, 6);
+                ctx.fillRect(-15, -15, 30, 30); // Тело
+                ctx.fillStyle = "black"; ctx.fillRect(5, -3, 20, 6); // Дуло
                 ctx.restore();
             }
             requestAnimationFrame(draw);
         }
         draw();
-
-        function move(dx, dy, ang) {
-            if (!myId || !players[myId]) return;
-            players[myId].x += dx;
-            players[myId].y += dy;
-            players[myId].angle = ang;
-            socket.emit('move', players[myId]);
-        }
 
         // Управление ПК
         window.addEventListener('keydown', e => {
@@ -119,14 +117,14 @@
             if (e.key === 's') move(0, 5, Math.PI/2);
             if (e.key === 'a') move(-5, 0, Math.PI);
             if (e.key === 'd') move(5, 0, 0);
-            if (e.code === 'Space') socket.emit('shoot');
+            if (e.code === 'Space') socket.emit('shoot'); // Выстрел на пробел
         });
 
-        // Мобайл
+        // Мобайл (Джойстик и кнопка)
         if ('ontouchstart' in window) {
             document.getElementById('fire-btn').style.display = 'flex';
-            document.getElementById('fire-btn').ontouchstart = () => socket.emit('shoot');
-            nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '60px', bottom: '60px'}, color: 'white' })
+            document.getElementById('fire-btn').addEventListener('touchstart', () => socket.emit('shoot'));
+            nipplejs.create({ zone: document.getElementById('joy'), mode: 'static', position: {left: '70px', bottom: '70px'}, color: 'white' })
             .on('move', (e, d) => move(Math.cos(d.angle.radian)*5, -Math.sin(d.angle.radian)*5, -d.angle.radian));
         }
     </script>
