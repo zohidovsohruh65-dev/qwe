@@ -2,7 +2,6 @@ const express = require('express');
 const app = express();
 const http = require('http').Server(app);
 const io = require('socket.io')(http);
-const path = require('path');
 
 app.use(express.static(__dirname));
 
@@ -20,19 +19,21 @@ io.on('connection', (socket) => {
 
     socket.on('move', (data) => {
         if (players[socket.id]) {
-            Object.assign(players[socket.id], data);
+            players[socket.id].x = data.x;
+            players[socket.id].y = data.y;
+            players[socket.id].angle = data.angle;
+            // Передаем всем остальным, чтобы не было дерготни у себя
             socket.broadcast.emit('updatePlayers', players);
         }
     });
 
-    socket.on('shoot', () => {
+    socket.on('shoot', (data) => {
         const p = players[socket.id];
         if (p && p.hp > 0) {
-            console.log('BANG! Shot from: ' + socket.id);
             io.emit('bullet', {
-                x: p.x + Math.cos(p.angle) * 30, // Вылет пули дальше от центра
-                y: p.y + Math.sin(p.angle) * 30,
-                angle: p.angle,
+                x: p.x + Math.cos(data.angle) * 30,
+                y: p.y + Math.sin(data.angle) * 30,
+                angle: data.angle,
                 owner: socket.id
             });
         }
@@ -43,8 +44,8 @@ io.on('connection', (socket) => {
             players[targetId].hp -= 10;
             if (players[targetId].hp <= 0) {
                 players[targetId].hp = 100;
-                players[targetId].x = Math.random() * 500;
-                players[targetId].y = Math.random() * 400;
+                players[targetId].x = Math.random() * 800;
+                players[targetId].y = Math.random() * 600;
             }
             io.emit('updatePlayers', players);
         }
@@ -56,5 +57,4 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => console.log('Server running on port ' + PORT));
+http.listen(process.env.PORT || 3000);
