@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Танки: Фикс</title>
+    <title>Танки: Без Лагов</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; overflow: hidden; }
+        body { margin: 0; background: #1a1a1a; overflow: hidden; touch-action: none; }
         canvas { display: block; background: #222; }
-        #ui { position: fixed; top: 10px; left: 10px; color: #fff; font: 20px Arial; pointer-events: none; z-index: 10; }
-        #joy { position: fixed; bottom: 40px; left: 40px; width: 120px; height: 120px; z-index: 10; }
+        #ui { position: fixed; top: 10px; left: 10px; color: #fff; font: bold 20px Arial; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -31,40 +30,48 @@
         let mouseX = 0, mouseY = 0;
 
         socket.on('connect', () => { myId = socket.id; });
-
-        socket.on('updatePlayers', (data) => {
-            for (let id in data) {
-                if (id !== myId) {
-                    if (!players[id]) {
-                        players[id] = data[id];
-                    } else {
-                        players[id].targetX = data[id].x;
-                        players[id].targetY = data[id].y;
-                        players[id].angle = data[id].angle;
-                        players[id].turretAngle = data[id].turretAngle;
-                        players[id].hp = data[id].hp;
-                    }
-                } else {
-                    if (!players[myId]) players[myId] = data[id];
-                    players[myId].hp = data[id].hp;
-                }
+        
+        socket.on('moveUpdate', (data) => {
+            if (!players[data.id]) players[data.id] = data;
+            else {
+                players[data.id].targetX = data.x;
+                players[data.id].targetY = data.y;
+                players[data.id].angle = data.angle;
+                players[data.id].turretAngle = data.turretAngle;
             }
-            // Удаляем отключившихся
-            for (let id in players) {
-                if (!data[id] && id !== myId) delete players[id];
+        });
+
+        socket.on('updateHP', (data) => {
+            if (players[data.id]) {
+                players[data.id].hp = data.hp;
+                if (data.hp === 100) { players[data.id].x = data.x; players[data.id].y = data.y; }
             }
         });
 
         socket.on('bullet', b => bullets.push({...b, d: 0}));
+        socket.on('removePlayer', id => delete players[id]);
 
         window.onmousemove = e => { mouseX = e.clientX; mouseY = e.clientY; };
-
-        window.onmousedown = () => {
+        
+        // ВЫСТРЕЛ (Без пинга)
+        function shoot() {
             if (!players[myId]) return;
             const p = players[myId];
             const ang = Math.atan2(mouseY - p.y, mouseX - p.x);
-            socket.emit('shoot', { x: p.x + Math.cos(ang)*30, y: p.y + Math.sin(ang)*30, angle: ang });
-        };
+            
+            // Расчет точки появления пули (кончик дула)
+            const muzzleX = p.x + Math.cos(ang) * 30;
+            const muzzleY = p.y + Math.sin(ang) * 30;
+            
+            const bData = { x: muzzleX, y: muzzleY, angle: ang, owner: myId };
+            
+            // 1. Показываем пулю себе МГНОВЕННО
+            bullets.push({...bData, d: 0});
+            // 2. Отправляем остальным
+            socket.emit('shoot', bData);
+        }
+
+        window.onmousedown = shoot;
 
         function loop() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -74,90 +81,80 @@
             me.turretAngle = Math.atan2(mouseY - me.y, mouseX - me.x);
 
             // Пули
-            bullets.forEach((b, i) => {
-                b.x += Math.cos(b.angle) * 12;
-                b.y += Math.sin(b.angle) * 12;
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += Math.cos(b.angle) * 15;
+                b.y += Math.sin(b.angle) * 15;
                 b.d++;
-                ctx.fillStyle = "#ff0";
-                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
+
+                ctx.fillStyle = "#fff700";
+                ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI*2); ctx.fill();
+
                 if (b.owner === myId) {
                     for (let id in players) {
-                        if (id !== myId && Math.hypot(b.x - players[id].x, b.y - players[id].y) < 25) {
+                        if (id !== myId && Math.hypot(b.x-players[id].x, b.y-players[id].y) < 25) {
                             socket.emit('hit', id);
                             bullets.splice(i, 1);
+                            break;
                         }
                     }
                 }
-                if (b.d > 80) bullets.splice(i, 1);
-            });
+                if (b.d > 60) bullets.splice(i, 1);
+            }
 
             // Танки
             for (let id in players) {
                 let p = players[id];
                 if (id !== myId && p.targetX !== undefined) {
-                    p.x += (p.targetX - p.x) * 0.2;
-                    p.y += (p.targetY - p.y) * 0.2;
+                    p.x += (p.targetX - p.x) * 0.15; // Плавное скольжение
+                    p.y += (p.targetY - p.y) * 0.15;
                 }
 
                 ctx.save();
                 ctx.translate(p.x, p.y);
-                // HP бар
-                ctx.fillStyle = "red"; ctx.fillRect(-20, -40, 40, 4);
-                ctx.fillStyle = "#0f0"; ctx.fillRect(-20, -40, (p.hp / 100) * 40, 4);
+                // HP
+                ctx.fillStyle = "red"; ctx.fillRect(-20, -40, 40, 5);
+                ctx.fillStyle = "#0f0"; ctx.fillRect(-20, -40, (p.hp/100)*40, 5);
                 // Корпус
                 ctx.rotate(p.angle);
-                ctx.fillStyle = p.color; ctx.fillRect(-15, -15, 30, 30);
+                ctx.fillStyle = p.color; ctx.fillRect(-18, -18, 36, 36);
+                ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(-18, -18, 36, 36);
                 ctx.restore();
-                // Башня
+                
+                // Башня (Всегда из центра танка)
                 ctx.save();
                 ctx.translate(p.x, p.y);
                 ctx.rotate(p.turretAngle);
-                ctx.fillStyle = "#000"; ctx.fillRect(0, -2, 25, 4);
+                ctx.fillStyle = p.color; ctx.fillRect(-8, -8, 16, 16);
+                ctx.strokeRect(-8, -8, 16, 16);
+                ctx.fillStyle = "#333"; ctx.fillRect(0, -3, 30, 6); // Дуло длиннее
                 ctx.restore();
             }
-
             document.getElementById('hp').innerText = me.hp;
             requestAnimationFrame(loop);
         }
         loop();
 
-        // Клавиатура
+        // Управление (Плавное)
         const keys = {};
         window.onkeydown = e => keys[e.key.toLowerCase()] = true;
         window.onkeyup = e => keys[e.key.toLowerCase()] = false;
-
+        
         setInterval(() => {
             if (!players[myId]) return;
-            let moved = false;
             let p = players[myId];
-            let speed = 5;
+            let moved = false;
+            let spd = 5;
 
-            if (keys['w'] || keys['ц'] || keys['arrowup'])    { p.y -= speed; p.angle = -Math.PI/2; moved = true; }
-            if (keys['s'] || keys['ы'] || keys['arrowdown'])   { p.y += speed; p.angle =  Math.PI/2; moved = true; }
-            if (keys['a'] || keys['ф'] || keys['arrowleft'])   { p.x -= speed; p.angle =  Math.PI;   moved = true; }
-            if (keys['d'] || keys['в'] || keys['arrowright'])  { p.x += speed; p.angle =  0;         moved = true; }
-
+            if (keys['w'] || keys['ц']) { p.y -= spd; p.angle = -Math.PI/2; moved = true; }
+            if (keys['s'] || keys['ы']) { p.y += spd; p.angle = Math.PI/2; moved = true; }
+            if (keys['a'] || keys['ф']) { p.x -= spd; p.angle = Math.PI; moved = true; }
+            if (keys['d'] || keys['в']) { p.x += spd; p.angle = 0; moved = true; }
+            
             if (moved) {
                 socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
             }
-        }, 30);
-
-        // Мобильный джойстик
-        if ('ontouchstart' in window) {
-            nipplejs.create({
-                zone: document.getElementById('joy'),
-                mode: 'static',
-                position: { left: '70px', bottom: '70px' },
-                color: 'white'
-            }).on('move', (e, d) => {
-                if (!players[myId]) return;
-                let p = players[myId];
-                p.x += Math.cos(d.angle.radian) * 5;
-                p.y -= Math.sin(d.angle.radian) * 5;
-                p.angle = -d.angle.radian;
-                socket.emit('move', { x: p.x, y: p.y, angle: p.angle, turretAngle: p.turretAngle });
-            });
-        }
+        }, 25);
     </script>
 </body>
 </html>
